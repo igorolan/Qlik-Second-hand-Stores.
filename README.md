@@ -8,9 +8,9 @@ The data tables are in the Data folder in a file called Qlik4U.mdb
 
 # Data Route
 ![Model](https://user-images.githubusercontent.com/82092425/182689701-7277a07b-32fe-489c-b4ff-d1e8f21dfda5.PNG)
-# Dashboard
+# General Dashboard
 ![Dashbord](https://user-images.githubusercontent.com/82092425/182693003-833d600b-7209-4902-8f9e-5e997b1b82ed.PNG)
 # Sales Dashboard
 ![SalesDashboard](https://user-images.githubusercontent.com/82092425/182693654-7411fffb-144f-4db0-b21f-1ad52883d5a0.PNG)
-# Items
+# Inventory Dashboard
 ![Items](https://user-images.githubusercontent.com/82092425/182694198-caa5447a-fc17-49d7-9f7e-aeb1edcba0ee.PNG)
