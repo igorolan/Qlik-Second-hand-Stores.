@@ -1,0 +1,494 @@
+//////////////////////////////////////////////////////////////// First Load Only
+
+LIB CONNECT TO 'DB';
+
+/////////////////////////////////////   Sales  ////////////////////////////////////////////
+Sales:
+SQL SELECT CampaignID,
+    `Date`,
+    DocumentNumber,
+    ItemID,
+    Quantity,
+    SalesmanID,
+    StoreHanut,
+    `Time`,
+    TotalPriceBeforVat
+FROM Sales;
+Store Sales into [lib://Qlik4uDB/SalesHistory.QVD] (QVD);
+Drop Table Sales;
+
+
+/////////////////////////////////////////  Sales New  /////////////////////////////////////
+// LIB CONNECT TO 'DB';
+SalesNew:
+SQL SELECT CampaignID,
+    `Date`,
+    DocumentNumber,
+    ItemID,
+    Quantity,
+    SalesmanID,
+    StoreHanut,
+    `Time`,
+    TotalPriceBeforVat
+FROM `Sales New`;
+Store SalesNew into [lib://Qlik4uDB/SalesNew.QVD] (QVD);
+Drop Table SalesNew;
+
+
+//////////////////////////////////////////////////////////////// Incremental Load
+
+LET vIncremntal= '0';  
+
+
+if $(vIncremntal)= 1 then
+
+
+// vIncremntal)= 1 => 	full load
+// vIncremntal)= 0 =>	Incremntal load
+
+////////////////////////////////////////////////////////////////   Incremental - Delta
+
+//     /*
+
+// // //*****************************************************************************************
+// // // First Load Only טעינת היסטוריה בפעם הראשונה 
+// // // //*****************************************************************************************
+
+
+// //*****************************************************************************************
+// //קביעת התאריך ממנו רוצים לבצע טעינה 
+// //*****************************************************************************************
+
+MaxDateTMP:
+Load
+Max(Date([Date])) as MaxDateNum
+FROM [lib://Qlik4uDB/SalesHistory.QVD] (QVD);
+// Exit Script;
+
+LET vMaxDateNum = Date(Peek('MaxDateNum', 0, 'MaxDateTMP'));  ///////// 
+
+// Exit Script;
+
+Drop Table MaxDateTMP;
+
+// //*****************************************************************************************
+// //טוענים שורות החסרות
+// //*****************************************************************************************
+
+SalesNewDelta: 
+LOAD *
+FROM [lib://Qlik4uDB/SalesNew.QVD](qvd) 
+Where Date > '$(vMaxDateNum)';
+
+If NoOfRows(SalesNewDelta) <> Null Then
+Store SalesNewDelta into [lib://Qlik4uDB/SalesNewDelta.QVD] (QVD);
+// Exit Script;
+End If
+
+// //*****************************************************************************************
+// // חיבור טבלה היסטורית
+// //*****************************************************************************************
+
+Concatenate  //(SalesNewDelta)
+
+// SalesHistory:
+Load * 
+From [lib://Qlik4uDB/SalesHistory.QVD] (QVD);
+
+// Exit Script;
+
+store * from SalesNewDelta into [lib://Qlik4uDB/SalesHistory.qvd];
+drop table SalesNewDelta;
+
+// Exit Script;
+
+
+//    */
+
+
+///////////////////////////////////////////////////////////////   Incremental - Loop
+
+/*
+
+//*****************************************************************************************
+// // // First Load Only טעינת היסטוריה בפעם הראשונה  
+//*****************************************************************************************
+
+//*****************************************************************************************
+// // 1 - שליפת כל התאריכים הקיימים בקובץ המקור
+//*****************************************************************************************
+SalesHistoryTMP:
+		Load 
+        	Distinct
+     		"Date"
+FROM [lib://Qlik4uDB/SalesHistory.QVD](qvd);
+
+//*****************************************************************************************
+// // 2 - Concat של כל התאריכים להם רוצים ליצר קובץ לתוך משתנה כסטרינג
+//*****************************************************************************************
+SalesHistoryTMP2:
+		Load
+        	chr(39)&concat("Date",chr(39)&','&chr(39))&chr(39) as Dates
+			Resident SalesHistoryTMP
+			Order by "Date";
+Drop Table SalesHistoryTMP;
+
+			Let vString = Peek('Dates');
+
+Drop Table SalesHistoryTMP2;
+
+//*****************************************************************************************
+// // // 3 - לולאה שעוברת על כל ערך בסטרינג ומייצרת קובץ בשם התאריך
+//*****************************************************************************************
+
+For Each vDate in $(vString)
+Let vDateFormat= Date(vDate, 'DD_MM_YYYY');
+Data:
+	LOAD
+      	CampaignID,
+      	"Date",
+      	DocumentNumber,
+      	ItemID,
+      	Quantity,
+      	SalesmanID,
+      	StoreHanut,
+      	"Time",
+      	TotalPriceBeforVat
+FROM [lib://Qlik4uDB/SalesHistory.QVD](qvd)
+		
+        Where "Date" = '$(vDate)' ;
+
+Store Data into [lib://Incremental by date/$(vDateFormat).qvd]; // שמירת קובץ לפי התאריך
+Drop Table Data;
+Next;
+
+// //*****************************************************************************************
+// //קובעים את התאריך ממנו רוצים לבצע טעינה חדשה
+// //*****************************************************************************************
+
+MaxDateTMP:
+		Load
+			Max(Date("Date")) as MaxDateNum
+FROM [lib://Qlik4uDB/SalesHistory.QVD] (QVD);
+
+LET vMaxDateNum = Date(Peek('MaxDateNum', 0, 'MaxDateTMP'));  ///////// 
+
+Drop Table MaxDateTMP;
+
+// //*****************************************************************************************
+ //1 - שליפת כל התאריכים הקיימים בקובץ החדש
+// //*****************************************************************************************
+
+SalesNewTMP: 
+		Load
+        	Distinct
+   			"Date"
+FROM [lib://Qlik4uDB/SalesNew.QVD](qvd)
+
+			Where Date > '$(vMaxDateNum)';
+
+// //*****************************************************************************************
+// 2 - Concat של כל התאריכים להם רוצים ליצר קובץ לתוך משתנה כסטרינג
+// //*****************************************************************************************
+
+SalesNewTMP2: // חיבור למחרוזת לצורך הכנסה למשתנה
+		Load
+        	chr(39)&concat("Date",chr(39)&','&chr(39))&chr(39) as Dates
+			Resident SalesNewTMP;
+        
+drop table SalesNewTMP;
+
+Let vString = Peek('Dates',0,'SalesNewTMP2');  // הטבלה מכילה שורה 1 - המספור מתחיל מ-0
+
+Drop Table SalesNewTMP2;
+
+// //*****************************************************************************************
+// 3 - לולאה שעוברת על כל ערך בסטרינג ומייצרת קובץ בשם התאריך
+// //*****************************************************************************************
+
+For Each vDate in $(vString) // לולאת קבצים לטעינה
+Let vDateFormat= Date(vDate, 'DD_MM_YYYY');
+
+NewSales:
+LOAD
+    CampaignID,
+    "Date",
+    DocumentNumber,
+    ItemID,
+    Quantity,
+    SalesmanID,
+    StoreHanut,
+    "Time",
+    TotalPriceBeforVat
+FROM [lib://Qlik4uDB/SalesNew.QVD]
+(qvd)
+where "Date" = '$(vDate)';
+
+store NewSales into [lib://Incremental by date/$(vDateFormat).qvd];// שמירת קובץ לפי התאריך
+Drop Table NewSales;
+
+next;
+
+// //*****************************************************************************************
+//                         Load in ETL 
+// 4 -  טעינת כל הקבצים במחיצה וחיבור לקובץ אחד
+// //*****************************************************************************************
+/*
+TotalSales:
+LOAD *
+    
+FROM [lib://Incremental by date/*.qvd](qvd);  // ה-* מסמנת טעינה של כל הקבצים בספריה
+
+store * from TotalSales into [lib://Qlik4uDB/TotalSales.qvd](qvd);	// דריסת קובץ הסטוריה
+// drop table TotalSales;
+
+*/
+
+//////////////////////////////////////////////////////////////  Incremental - Exist
+
+/*
+
+//*****************************************************************************************
+// First Load Only טעינת היסטוריה בפעם הראשונה 
+//*****************************************************************************************
+
+
+//*****************************************************************************************
+// בניית מפתח לחיבור
+//*****************************************************************************************
+
+TotalSales:
+LOAD *,
+    num("Date") &'|'& StoreHanut &'|'& ItemID as Key
+FROM [lib://Qlik4uDB/SalesHistory.QVD] (QVD);
+
+//*****************************************************************************************
+// טעינת הנתונים החסרים
+//*****************************************************************************************
+
+Concatenate 
+
+LOAD *
+FROM [lib://Qlik4uDB/SalesNew.QVD] (QVD)
+where not Exists(Key,num("Date")&'|'&StoreHanut&'|'&ItemID); // הבאת רק רשומות שלא הגיעו בקובץ היומי
+
+store TotalSales into [lib://Qlik4uDB/TotalSales.qvd]; // שמירה לקובץ ההיסטוריה
+drop table TotalSales;
+
+// exit script;
+
+*/
+
+////////////////////////////////////////////////////////////////////////////////////////   Else
+
+Else
+
+
+// LET vIncremntal= '1';      // // full load
+
+
+/////////////////////////////////////////////////////////////////////  Concatenate
+
+//*****************************************************************************************
+// טעינת הנתונים החסרים בנתונים ההיסטוריים
+//*****************************************************************************************
+
+SalesNew:
+LOAD *
+FROM [lib://Qlik4uDB/SalesNew.QVD](qvd)
+
+Where Date(Date)> '31/12/2019'
+;
+
+// Exit Script;
+//*****************************************************************************************
+// חיבור נתונים היסטוריים
+//*****************************************************************************************
+
+Concatenate
+// SalesHistory:
+LOAD *
+FROM [lib://Qlik4uDB/SalesHistory.QVD]
+(qvd);
+
+// Exit Script;
+store * from SalesNew into [lib://Qlik4uDB/TotalSales.qvd];
+drop table SalesNew;
+
+
+// Exit Script;
+
+
+////////
+
+
+//*****************************************************************************************
+// טעינת שאר הקבצים
+//*****************************************************************************************
+
+LIB CONNECT TO 'DB';
+
+
+/////////////////////////////////////////  Campaigns  ////////////////////////////////////////
+Campaigns:
+SQL SELECT CampaignID,
+    Name
+FROM Campaigns;
+
+Store Campaigns into [lib://Qlik4uDB/Campaigns.QVD] (QVD);
+Drop Table Campaigns;
+
+///////////////////////////////////////// Category   ////////////////////////////////////////////
+Category:
+SQL SELECT `Category ID`,
+    `Category Name`
+FROM Category;
+
+Store Category into [lib://Qlik4uDB/Category.QVD] (QVD);
+Drop Table Category;
+
+////////////////////////////////////////  Cost  ///////////////////////////////////////////////////
+Cost:
+SQL SELECT Cost,
+    `From Date`,
+    SalesmanID,
+    `To Date`
+FROM Cost;
+
+Store Cost into [lib://Qlik4uDB/Cost.QVD] (QVD);
+Drop Table Cost;
+
+
+//////////////////////////////////////  CUSTOMERS_COUNT  ////////////////////////////////////
+CUSTOMERSCOUNT:
+SQL SELECT `COUNT_DATE`,
+    `COUNT_TIME`,
+    `CUSTOMER_REDUCTION`,
+    `CUSTOMERS_NUM`,
+    `ENTRY_NO`,
+    ID,
+    `OFFSET_STATUS`,
+    `STORE_NO`
+FROM `CUSTOMERS_COUNT`;
+
+Store CUSTOMERSCOUNT into [lib://Qlik4uDB/CUSTOMERSCOUNT.QVD] (QVD);
+Drop Table CUSTOMERSCOUNT;
+
+
+///////////////////////////////////////  Department  /////////////////////////////////////
+Department:
+SQL SELECT DEPARTMENT,
+    `DEPARTMENT ID`
+FROM Department;
+
+Store Department into [lib://Qlik4uDB/Department.QVD] (QVD);
+Drop Table Department;
+
+
+
+////////////////////////////////////////  EmpDeparture  //////////////////////////////////////
+EmpDeparture:
+SQL SELECT SalesmanID,
+    `To Date`
+FROM EmpDeparture;
+
+
+Store EmpDeparture into [lib://Qlik4uDB/EmpDeparture.QVD] (QVD);
+Drop Table EmpDeparture;
+
+
+//////////////////////////////////////   EmpHier   ///////////////////////////////////////////
+EmpHier:
+SQL SELECT Department,
+    Manager,
+    SalesmanID,
+    StartDate
+FROM EmpHier;
+
+Store EmpHier into [lib://Qlik4uDB/EmpHier.QVD] (QVD);
+Drop Table EmpHier;
+
+
+//////////////////////////////////////  EmpHours  //////////////////////////////////////////
+EmpHours:
+SQL SELECT `Date`,
+    `Hour`,
+    NumberOfHours,
+    SalesmanID,
+    StoreID
+FROM EmpHours;
+
+Store EmpHours into [lib://Qlik4uDB/EmpHours.QVD] (QVD);
+Drop Table EmpHours;
+
+
+/////////////////////////////////////  EmpName     ///////////////////////////////////////////
+EmpName:
+SQL SELECT `First Name`,
+    `Last Name`,
+    SalesmanID
+FROM EmpName;
+
+Store EmpName into [lib://Qlik4uDB/EmpName.QVD] (QVD);
+Drop Table EmpName;
+
+
+
+////////////////////////////////////////  Groups  //////////////////////////////////////////
+Groups:
+SQL SELECT `Group`,
+    `Group Num`
+FROM `Groups`;
+
+Store Groups into [lib://Qlik4uDB/Groups.QVD] (QVD);
+Drop Table Groups;
+
+
+//////////////////////////////////////  Items  ///////////////////////////////////////////
+Items:
+SQL SELECT CategoryID,
+    `Color`,
+    `DEPARTMENT ID`,
+    GroupID,
+    `Item Name`,
+    ItemFullName,
+    ItemID,
+    SEASON,
+    `Size`,
+    קולקציה
+FROM Items;
+
+Store Items into [lib://Qlik4uDB/Items.QVD] (QVD);
+Drop Table Items;
+
+
+
+
+/////////////////////////////////////////  Stock  ////////////////////////////////////////////
+Stock:
+SQL SELECT CurrentStock,
+    CurrentStockValue,
+    ItemkeyName,
+    `Store`
+FROM Stock;
+
+Store Stock into [lib://Qlik4uDB/Stock.QVD] (QVD);
+Drop Table Stock;
+
+
+////////////////////////////////////////////   Stores  ////////////////////////////////////////
+Stores:
+SQL SELECT Address,
+    latitude,
+    longitude,
+    `Store Name`,
+    StoreCode,
+    StoreSize
+FROM Stores;
+
+Store Stores into [lib://Qlik4uDB/Stores.QVD] (QVD);
+Drop Table Stores;
+
+///////////////////////////////////////////////////////////////////////  *******End if*********
+
+End If
